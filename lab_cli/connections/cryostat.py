@@ -6,7 +6,7 @@ import socket
 import struct
 from pathlib import Path
 
-CRYO_PORT = 7773
+CRYO_PORT = 2224
 
 # Dynamic Path Setup
 current_dir = Path(__file__).resolve().parent
