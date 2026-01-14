@@ -8,7 +8,7 @@ import shlex
 import time
 import sys
 
-import actions
+from . import actions
 # Force load the plugins
 import actions.laser_actions
 import actions.cryo_actions
