@@ -10,9 +10,10 @@ import sys
 
 from . import actions
 # Force load the plugins
-import actions.laser_actions
-import actions.cryo_actions
-import actions.general_actions
+from .actions import laser_actions
+from .actions import cryo_actions
+from .actions import general_actions
+# TODO: from .actions import oscillo_actions
 
 # Application Modules
 # Import from the generic registry and actions, not specific drivers
