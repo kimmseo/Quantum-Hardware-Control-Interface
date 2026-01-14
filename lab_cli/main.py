@@ -7,6 +7,7 @@ from rich.live import Live
 import shlex
 import time
 import sys
+import inspect
 
 from . import actions
 # Force load the plugins
@@ -107,7 +108,6 @@ def inspect_device(device_id: str):
 def run_action_cli(ctx: typer.Context, action_name: str):
     """
     Executes ANY registered action immediately.
-    Usage: lab-cli run set-field target=0.5
     """
     # Look up the action
     action_def = get_action(action_name)
@@ -116,17 +116,28 @@ def run_action_cli(ctx: typer.Context, action_name: str):
         console.print("Available actions: " + ", ".join(get_all_actions().keys()))
         return
 
-    # Parse extra arguments (e.g. ['target=0.5', 'speed=10'])
+    # Determine params and callable function
+    if hasattr(action_def, "params") and hasattr(action_def, "func"):
+        # It is a wrapper object
+        required_params = action_def.params
+        action_func = action_def.func
+    else:
+        # It is a raw function
+        sig = inspect.signature(action_def)
+        # We filter out 'context' because the system injects it, the user shouldn't type it
+        required_params = [p for p in sig.parameters if p != "context"]
+        action_func = action_def
+
+    # Parse extra arguments
     kwargs = {}
     for arg in ctx.args:
         if "=" in arg:
             key, value = arg.split("=", 1)
-            # Remove leading '--' if user typed --target=5
             key = key.lstrip("-")
             kwargs[key] = value
 
-    # Check for missing parameters and prompt interactively
-    missing = [p for p in action_def.params if p not in kwargs]
+    # Check for missing parameters using the NEW required_params list
+    missing = [p for p in required_params if p not in kwargs]
     if missing:
         console.print(f"[yellow]Missing parameters for '{action_name}':[/yellow]")
         for param in missing:
@@ -136,8 +147,8 @@ def run_action_cli(ctx: typer.Context, action_name: str):
     # Run the Action
     console.print(f"[bold]Running {action_name}...[/bold]")
     try:
-        # We assume the action returns True on success
-        success = action_def.func(**kwargs)
+        # Call the resolved function explicitly
+        success = action_func(**kwargs)
         if success:
             console.print(f"[green]✔ Action {action_name} completed.[/green]")
         else:
@@ -159,7 +170,6 @@ def define_experiment(name: str):
     steps = []
 
     while True:
-        # Dynamic Choice List
         choices = list(actions.keys()) + ["finish"]
         cmd_type = Prompt.ask("\nSelect Action", choices=choices)
 
@@ -169,9 +179,17 @@ def define_experiment(name: str):
         action_def = actions[cmd_type]
         step_data = {"type": cmd_type}
 
-        # Dynamically ask for each parameter required by the action
+        # Inspect parameters
+        if hasattr(action_def, "params"):
+             required_params = action_def.params
+        else:
+             sig = inspect.signature(action_def)
+             required_params = [p for p in sig.parameters if p != "context"]
+
         console.print(f"[italic]Configuring {cmd_type}... (Use {{var}} for variables)[/italic]")
-        for param in action_def.params:
+
+        # Loop over the FIXED parameter list
+        for param in required_params:
             val = Prompt.ask(f"Value for '{param}'")
             step_data[param] = val
 
