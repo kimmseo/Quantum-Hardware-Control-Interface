@@ -8,6 +8,12 @@ import shlex
 import time
 import sys
 
+import actions
+# Force load the plugins
+import actions.laser_actions
+import actions.cryo_actions
+import actions.general_actions
+
 # Application Modules
 # Import from the generic registry and actions, not specific drivers
 from .experiment_registry import save_experiment, get_experiment
