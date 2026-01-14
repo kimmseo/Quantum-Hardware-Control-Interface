@@ -22,9 +22,9 @@ if libs_path.exists():
         sys.path.append(libs_path_str)
 
 # Debugging
-print(f"DEBUG: Looking for libs at: {libs_path}")
-print(f"DEBUG: Path exists? {libs_path.exists()}")
-print(f"DEBUG: Current sys.path: {sys.path}")
+#print(f"DEBUG: Looking for libs at: {libs_path}")
+#print(f"DEBUG: Path exists? {libs_path.exists()}")
+#print(f"DEBUG: Current sys.path: {sys.path}")
 
 # Import Library
 try:
