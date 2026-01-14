@@ -21,7 +21,7 @@ if libs_path.exists():
     if libs_path_str not in sys.path:
         sys.path.append(libs_path_str)
 
-# Insert this before "try: import scryostation"
+# Debugging
 print(f"DEBUG: Looking for libs at: {libs_path}")
 print(f"DEBUG: Path exists? {libs_path.exists()}")
 print(f"DEBUG: Current sys.path: {sys.path}")
@@ -30,6 +30,7 @@ print(f"DEBUG: Current sys.path: {sys.path}")
 try:
     import scryostation
 except ImportError:
+    print(f"DEBUG: Import failed details: {e}")
     scryostation = None
 
 # Patch Requests
