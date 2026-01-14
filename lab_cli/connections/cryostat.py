@@ -29,7 +29,7 @@ print(f"DEBUG: Current sys.path: {sys.path}")
 # Import Library
 try:
     import scryostation
-except ImportError:
+except ImportError as e:
     print(f"DEBUG: Import failed details: {e}")
     scryostation = None
 
