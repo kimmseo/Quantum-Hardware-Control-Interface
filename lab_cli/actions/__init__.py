@@ -1,6 +1,5 @@
-# actions/__init__.py
-
 # 1. Define the Registry
+# (Renamed to match standard conventions, but simple 'registry' is fine too)
 registry = {}
 
 # 2. Define the Decorator
@@ -10,19 +9,26 @@ def register_action(name):
         return func
     return decorator
 
-# 3. Define Helper Functions (Restoring missing ones)
+# 3. Define Helper Functions
 def get_all_actions():
-    """Returns a list of all registered command names."""
-    return list(registry.keys())
+    """
+    Returns the FULL registry dictionary.
+    Format: {'command_name': function_object}
+    """
+    # Return the dict, not a list of keys
+    return registry
 
 def get_action(name):
     """Returns the function object for a specific command name."""
     return registry.get(name)
 
 def handle_command(raw_input):
-
+    """
+    Legacy handler for raw string input.
+    (Kept for compatibility, though main.py handles parsing now)
+    """
     # Debugging
-    print(f"DEBUG: Available commands: {list(registry.keys())}")
+    # print(f"DEBUG: Available commands: {list(registry.keys())}")
 
     if not raw_input:
         return
@@ -37,7 +43,6 @@ def handle_command(raw_input):
     if cmd_name in registry:
         try:
             # Execute the function with arguments
-            # Note: We pass *args (unpacked list) to the function
             result = registry[cmd_name](*args)
             return result
         except TypeError as e:
@@ -51,6 +56,7 @@ def handle_command(raw_input):
         return False
 
 # 4. Import Plugins Last (Required to fill the registry)
+# This executes the decorator @register_action in those files
 try:
     from . import laser_actions
     from . import cryo_actions

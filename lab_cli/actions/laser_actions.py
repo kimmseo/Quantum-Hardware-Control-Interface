@@ -148,7 +148,7 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
             duration = scan_range / float(speed)
 
             # Explicitly set rate to 100 Hz
-            dlc.laser1.recorder.sample_rate.set(100.0)
+            dlc.laser1.recorder.sampling_rate.set(100.0)
 
             # Add small buffer to recording time
             dlc.laser1.recorder.recording_time.set(duration + 1.0)
