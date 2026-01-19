@@ -31,31 +31,76 @@ def _get_dlc_connection(conf_key="laser-01"):
 
     return conf["ip"], DLCpro
 
+def _force_set(obj, param_name, value):
+    """
+    Robust setter that handles read-only properties by accessing private
+    backing attributes or calling .set() methods.
+    """
+    # 1. Try Direct Assignment (Standard)
+    try:
+        setattr(obj, param_name, value)
+        return True
+    except AttributeError:
+        pass # Expected for read-only properties
+
+    # 2. Try Private Attribute with .set() (Common Toptica pattern)
+    # e.g., obj.scan_begin is read-only, but obj._scan_begin is the controller
+    private_name = f"_{param_name}"
+    if hasattr(obj, private_name):
+        internal_obj = getattr(obj, private_name)
+
+        # Method A: Call .set() on the private object
+        if hasattr(internal_obj, 'set'):
+            try:
+                internal_obj.set(value)
+                return True
+            except Exception as e:
+                console.print(f"[yellow]Debug: {private_name}.set() failed: {e}[/yellow]")
+
+        # Method B: Direct assignment to private var (Last resort)
+        # Some SDKs wrap the value in the private var
+        try:
+            setattr(obj, private_name, value)
+            return True
+        except Exception:
+            pass
+
+    # 3. Check for specific '_set' suffix (Like sample_count_set)
+    setter_name = f"{param_name}_set"
+    if hasattr(obj, setter_name):
+        target = getattr(obj, setter_name)
+        if callable(target): # It's a method like set_param(val)
+            target(value)
+        else: # It's a property like param_set = val
+            setattr(obj, setter_name, value)
+        return True
+
+    console.print(f"[red]Error: Could not set '{param_name}' - No setter found.[/red]")
+    return False
+
 def _internal_set_power(dlc, power_mw: float):
     """
     Helper function to set laser power (mW).
-    Automatically enables Power Stabilization if available.
     """
     console.print(f"Setting power to {power_mw} mW...")
     try:
-        # Method 1: Power Stabilization (Preferred for constant output)
+        # Method 1: Power Stabilization
         if hasattr(dlc.laser1, 'power_stabilization'):
-            # Auto-enable stabilization before setting the value
-            # Using direct assignment
-            dlc.laser1.power_stabilization.enabled = True
-            dlc.laser1.power_stabilization.setpoint = float(power_mw)
+            # Use _force_set to handle read-only 'enabled' and 'setpoint'
+            # Based on debug output: _enabled and _setpoint exist
+            _force_set(dlc.laser1.power_stabilization, 'enabled', True)
+            _force_set(dlc.laser1.power_stabilization, 'setpoint', float(power_mw))
+
             console.print("[green]Power Stabilization Enabled & Set.[/green]")
             return True
 
-        # Method 2: Direct CTL Power (Fallback)
+        # Method 2: Direct CTL Power
         elif hasattr(dlc.laser1, 'ctl') and hasattr(dlc.laser1.ctl, 'power'):
-            # Using direct assignment
-            dlc.laser1.ctl.power = float(power_mw)
+            _force_set(dlc.laser1.ctl, 'power', float(power_mw))
             return True
 
         else:
-            console.print("[yellow]Warning: Could not identify power control \
-                          attribute. Power not changed.[/yellow]")
+            console.print("[yellow]Warning: Could not identify power control.[/yellow]")
             return False
 
     except Exception as e:
@@ -66,27 +111,23 @@ def _internal_set_power(dlc, power_mw: float):
 def action_enable_stabilization(state: int):
     """
     Enables (1) or Disables (0) the Power Stabilization loop.
-    Usage: enable-power-stabilization 1
     """
     ip, _ = _get_dlc_connection()
     if not ip: return False
 
     try:
         with DLCpro(NetworkConnection(ip)) as dlc:
-            # Check if feature exists
             if not hasattr(dlc.laser1, 'power_stabilization'):
-                console.print("[red]Error: This laser does not have Power \
-                              Stabilization.[/red]")
+                console.print("[red]Error: No Power Stabilization module.[/red]")
                 return False
 
             enable_bool = (int(state) == 1)
-            # Using direct assignment
-            dlc.laser1.power_stabilization.enabled = enable_bool
-
-            status_str = "ENABLED" if enable_bool else "DISABLED"
-            console.print(f"[green]Power Stabilization {status_str} \
-                          successfully.[/green]")
-            return True
+            # Use force setter
+            if _force_set(dlc.laser1.power_stabilization, 'enabled', enable_bool):
+                status_str = "ENABLED" if enable_bool else "DISABLED"
+                console.print(f"[green]Power Stabilization {status_str}.[/green]")
+                return True
+            return False
 
     except Exception as e:
         console.print(f"[red]Failed to switch stabilization: {e}[/red]")
@@ -96,7 +137,6 @@ def action_enable_stabilization(state: int):
 def action_set_power(power: float):
     """
     Sets the laser power in mW and enables stabilization.
-    Usage: set-laser-power 70 (Sets power to 70mW)
     """
     ip, _ = _get_dlc_connection()
     if not ip: return False
@@ -105,11 +145,9 @@ def action_set_power(power: float):
         with DLCpro(NetworkConnection(ip)) as dlc:
             success = _internal_set_power(dlc, power)
             if success:
-                console.print(f"[green]Laser power setpoint updated \
-                              to {power} mW.[/green]")
+                console.print(f"[green]Laser power updated to {power} mW.[/green]")
                 return True
-            else:
-                return False
+            return False
     except Exception as e:
         console.print(f"[red]Failed to connect or set power: {e}[/red]")
         return False
@@ -119,8 +157,6 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
                  context: dict = None):
     """
     Performs a wide scan sweep and saves data.
-    Automatically enables power stabilization at the requested power.
-    Usage: sweep-laser start_nm=... end_nm=... speed=... power=70
     """
     ip, _ = _get_dlc_connection()
     if not ip: return False
@@ -137,37 +173,38 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
 
     try:
         with DLCpro(NetworkConnection(ip)) as dlc:
-            # Set Power (Auto-enables stabilization)
+            # Set Power
             _internal_set_power(dlc, power)
 
-            # Setup Sweep Parameters
             console.print(f"Sweeping {start_nm}-{end_nm} nm @ {speed} nm/s...")
 
-            # Set parameters for sweep
-            dlc.laser1.wide_scan.scan_begin = float(start_nm)
-            dlc.laser1.wide_scan.scan_end = float(end_nm)
-            dlc.laser1.wide_scan.speed = float(speed)
+            # Use _force_set for WideScan parameters
+            # Uses _scan_begin.set() or similar internally
+            if not _force_set(dlc.laser1.wide_scan, 'scan_begin', float(start_nm)):
+                return False
+            _force_set(dlc.laser1.wide_scan, 'scan_end', float(end_nm))
+            _force_set(dlc.laser1.wide_scan, 'speed', float(speed))
 
             # Setup Recorder
             scan_range = abs(float(end_nm) - float(start_nm))
             duration = scan_range / float(speed)
 
-            try:
-                dlc.laser1.recorder.sampling_rate = 100.0
-            except (AttributeError, ValueError):
-                console.print("[yellow]Warning: Could not set sampling_rate (using default).[/yellow]")
+            # Use _force_set for sampling_rate (found _sampling_rate in debug)
+            _force_set(dlc.laser1.recorder, 'sampling_rate', 100.0)
 
-            # Add small buffer to recording time
-            dlc.laser1.recorder.recording_time = duration + 1.0
+            # Add buffer to recording time
+            _force_set(dlc.laser1.recorder, 'recording_time', duration + 1.0)
 
-            # Start Sweep (Method call remains valid)
+            # Start Sweep
             dlc.laser1.wide_scan.start()
 
             # Monitor State: 0 = Idle/Off, 1 = Moving/Scanning
+            # We use direct access for reading (getting is usually fine)
             while dlc.laser1.wide_scan.state != 0:
                 time.sleep(0.5)
 
             # Fetch Data
+            # recorded_sample_count is likely a read-only property, which is fine for reading
             total_samples = dlc.laser1.recorder.data.recorded_sample_count
             console.print(f"Acquiring {total_samples} samples...")
 
@@ -208,7 +245,6 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
 
     except Exception as e:
         console.print(f"[red]Sweep Failed: {e}[/red]")
-        # Optional: Print traceback for easier debugging
-        import traceback
-        traceback.print_exc()
+        # import traceback
+        # traceback.print_exc()
         return False
