@@ -158,20 +158,28 @@ def action_set_power(power: float):
 def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
                  context: dict = None):
     """
-    Performs a wide scan sweep and saves data.
+    Performs a wide scan sweep and saves data to a date-specific folder.
+    Filename includes speed, power, and range.
     """
     ip, _ = _get_dlc_connection()
     if not ip: return False
 
-    # Generate filename
+    # Folder and filename logic
+    # 1. Create Folder based on Date (e.g., 19012026)
+    date_str = datetime.now().strftime("%d%m%Y")
+    folder = os.path.join("Data_Sweeps", date_str)
+    if not os.path.exists(folder): os.makedirs(folder)
+
+    # 2. Build Suffix from Loop Variables (e.g., _field_0.1)
     suffix = ""
     if context:
         for k, v in context.items():
             suffix += f"_{k}_{v}"
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder = "Data_Sweeps"
-    if not os.path.exists(folder): os.makedirs(folder)
-    filename_base = os.path.join(folder, f"Sweep_{timestamp}{suffix}")
+
+    # 3. Construct Descriptive Filename (No timestamp)
+    # Format: Sweep_1530-1535nm_5nmps_0.7mW_field_0.1
+    filename_str = f"Sweep_{start_nm}-{end_nm}nm_{speed}nmps_{power}mW{suffix}"
+    filename_base = os.path.join(folder, filename_str)
 
     try:
         with DLCpro(NetworkConnection(ip)) as dlc:
@@ -190,7 +198,7 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
             scan_range = abs(float(end_nm) - float(start_nm))
             duration = scan_range / float(speed)
 
-            # Add safety buffer (minimum 10s or 20% extra)
+            # Safety buffer
             timeout_buffer = max(10.0, duration * 0.2)
             max_wait_time = duration + timeout_buffer
 
@@ -217,18 +225,15 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
 
                 # Read State
                 try:
-                    # Use _get_val to handle DecopInteger objects
                     raw_state = dlc.laser1.wide_scan.state
                     current_state = _get_val(raw_state)
                 except Exception:
                     current_state = -1
 
-                # Check for Completion (State 0 = Idle)
                 if current_state == 0:
                     console.print("\n[green]Sweep Complete (State 0).[/green]")
                     break
 
-                # Log state changes
                 if current_state != last_state:
                     console.print(f"Laser State: {current_state} (Scanning...)")
                     last_state = current_state
@@ -236,7 +241,6 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
                 time.sleep(0.5)
 
             # 6. Fetch Data
-            # Use _get_val to handle DecopInteger objects
             raw_count = dlc.laser1.recorder.data.recorded_sample_count
             total_samples = _get_val(raw_count)
 
@@ -262,9 +266,13 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
                 df = pd.DataFrame({"Wavelength": x_data, "Intensity": y_data})
                 df.to_excel(f"{filename_base}.xlsx", index=False)
 
+                # Plot title logic
+                clean_title = (f"Scan: {start_nm}-{end_nm}nm | Speed: {speed}nm/s | "
+                               f"Power: {power}mW\n{suffix.replace('_', ' ').strip()}")
+
                 plt.figure()
                 plt.plot(df["Wavelength"], df["Intensity"])
-                plt.title(os.path.basename(filename_base))
+                plt.title(clean_title)
                 plt.xlabel("Wavelength (nm)")
                 plt.ylabel("Intensity")
                 plt.grid(True)
