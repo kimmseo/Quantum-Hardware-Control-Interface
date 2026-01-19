@@ -1,4 +1,4 @@
-# Last updated 5th December 2025
+# Last updated 19 Jan 2026
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -8,16 +8,17 @@ import shlex
 import time
 import sys
 import inspect
+import os
+import json
+import numpy as np # Ensure numpy is imported for run-loop
 
 from . import actions
 # Force load the plugins
 from .actions import laser_actions
 from .actions import cryo_actions
 from .actions import general_actions
-# TODO: from .actions import oscillo_actions
 
 # Application Modules
-# Import from the generic registry and actions, not specific drivers
 from .experiment_registry import save_experiment, get_experiment
 from .actions import get_all_actions, get_action
 from .equipment_api import get_all_equipment, get_equipment_by_id
@@ -31,7 +32,163 @@ app = typer.Typer(
 
 console = Console()
 
-# MONITORING COMMANDS
+# --- EXPERIMENT MANAGEMENT COMMANDS (SINGLE FILE VERSION) ---
+
+# Location: One level up from the current package directory
+EXPERIMENTS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), \
+                                "user_experiments.json")
+
+def _load_experiments():
+    """Helper to load the monolithic experiments file."""
+    if not os.path.exists(EXPERIMENTS_FILE):
+        return {}
+    try:
+        with open(EXPERIMENTS_FILE, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        console.print("[red]Error: user_experiments.json is corrupted.[/red]")
+        return {}
+    except Exception as e:
+        console.print(f"[red]Error loading experiments: {e}[/red]")
+        return {}
+
+def _save_experiments(data):
+    """Helper to save the monolithic experiments file."""
+    try:
+        with open(EXPERIMENTS_FILE, 'w') as f:
+            json.dump(data, f, indent=4)
+        return True
+    except Exception as e:
+        console.print(f"[red]Error saving experiments: {e}[/red]")
+        return False
+
+def _edit_experiment_steps(exp_name: str, steps: list, full_data: dict):
+    """Helper to edit steps within a specific experiment."""
+    while True:
+        console.print(f"\n[bold underline]Editing Experiment: {exp_name}[/bold underline]")
+        for i, step in enumerate(steps):
+            # Format step for display
+            step_type = step.get('type', 'Unknown')
+            params = ", ".join([f"{k}={v}" for k, v in step.items() if k != "type"])
+            console.print(f"{i+1}. [cyan]{step_type}[/cyan] ({params})")
+
+        choice = Prompt.ask("\nSelect Step ID to edit (or 'save', 'cancel', 'add')")
+
+        if choice.lower() == 'cancel':
+            return
+
+        if choice.lower() == 'save':
+            full_data[exp_name] = steps
+            if _save_experiments(full_data):
+                console.print(f"[green]Experiment '{exp_name}' saved successfully![/green]")
+            return
+
+        if choice.lower() == 'add':
+            console.print("[yellow]To add steps, please use the 'define' command to overwrite \
+                          this experiment.[/yellow]")
+            continue
+
+        # Parse Step Selection
+        try:
+            idx = int(choice) - 1
+            if idx < 0 or idx >= len(steps): raise ValueError
+        except ValueError:
+            console.print("[red]Invalid index.[/red]")
+            continue
+
+        # Edit Specific Step
+        selected_step = steps[idx]
+        console.print(f"[yellow]Editing Step {idx+1}: {selected_step.get('type')}[/yellow]")
+
+        # Ask for param to change
+        keys = list(selected_step.keys())
+        param_choice = Prompt.ask("Enter parameter to change", choices=keys + ['delete', 'back'])
+
+        if param_choice == 'back':
+            continue
+
+        if param_choice == 'delete':
+            if typer.confirm(f"Delete step {idx+1}?"):
+                steps.pop(idx)
+                console.print("[red]Step removed.[/red]")
+            continue
+
+        # Change Value
+        current_val = selected_step.get(param_choice)
+        new_val = Prompt.ask(f"New value for '{param_choice}'", default=str(current_val))
+        selected_step[param_choice] = new_val
+        console.print(f"[green]Updated {param_choice} -> {new_val}[/green]")
+
+
+@app.command("manage")
+def manage_experiments():
+    """
+    Interactive menu to View, Edit, or Delete saved experiments.
+    """
+    # 1. Load Data
+    data = _load_experiments()
+    if not data:
+        console.print(f"[yellow]No experiments found in {EXPERIMENTS_FILE}.[/yellow]")
+        return
+
+    exp_names = list(data.keys())
+
+    # 2. Display Table
+    table = Table(title=f"Stored Experiments")
+    table.add_column("ID", justify="center", style="cyan", no_wrap=True)
+    table.add_column("Name", style="magenta")
+    table.add_column("Steps", justify="center")
+
+    for i, name in enumerate(exp_names):
+        step_count = len(data[name])
+        table.add_row(str(i+1), name, str(step_count))
+
+    console.print(table)
+
+    # 3. Select Experiment
+    selection = Prompt.ask("Select ID", default="q")
+    if selection.lower() == 'q': return
+
+    try:
+        idx = int(selection) - 1
+        if idx < 0 or idx >= len(exp_names): raise ValueError
+    except ValueError:
+        console.print("[red]Invalid selection.[/red]")
+        return
+
+    target_name = exp_names[idx]
+    target_steps = data[target_name]
+
+    # 4. Choose Action
+    action = Prompt.ask(
+        f"\nAction for [bold]{target_name}[/bold]",
+        choices=["view", "edit", "delete", "rename", "cancel"],
+        default="view"
+    )
+
+    if action == "view":
+        console.print_json(data=target_steps)
+
+    elif action == "delete":
+        if typer.confirm(f"Are you sure you want to DELETE '{target_name}'?"):
+            del data[target_name]
+            _save_experiments(data)
+            console.print(f"[red]Deleted '{target_name}'[/red]")
+
+    elif action == "rename":
+        new_name = Prompt.ask("Enter new name")
+        if new_name in data:
+            console.print("[red]Name already exists![/red]")
+        else:
+            data[new_name] = data.pop(target_name)
+            _save_experiments(data)
+            console.print(f"[green]Renamed to '{new_name}'[/green]")
+
+    elif action == "edit":
+        _edit_experiment_steps(target_name, target_steps, data)
+
+
+# --- MONITORING COMMANDS ---
 
 @app.command("status")
 def status_monitor(refresh_rate: float = 2.0):
@@ -100,7 +257,7 @@ def inspect_device(device_id: str):
         console.print(f"[cyan]{key}:[/cyan] {value}")
 
 
-# GENERIC CONTROL COMMANDS
+# --- GENERIC CONTROL COMMANDS ---
 
 @app.command("run",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
@@ -136,7 +293,7 @@ def run_action_cli(ctx: typer.Context, action_name: str):
             key = key.lstrip("-")
             kwargs[key] = value
 
-    # Check for missing parameters using the NEW required_params list
+    # Check for missing parameters
     missing = [p for p in required_params if p not in kwargs]
     if missing:
         console.print(f"[yellow]Missing parameters for '{action_name}':[/yellow]")
@@ -157,7 +314,7 @@ def run_action_cli(ctx: typer.Context, action_name: str):
         console.print(f"[bold red]Error executing action: {e}[/bold red]")
 
 
-# EXPERIMENT BUILDER COMMANDS
+# --- EXPERIMENT BUILDER COMMANDS ---
 
 @app.command("define")
 def define_experiment(name: str):
@@ -215,7 +372,6 @@ def run_loop_generic(
         console.print(f"[red]Experiment '{name}' not found.[/red]")
         return
 
-    import numpy as np
     # Handle range direction
     if start > end and step > 0: step = -step
     # Add tiny buffer to include the end value
@@ -257,7 +413,6 @@ def run_loop_generic(
                 try:
                     formatted_val = raw_val.format(**context)
                 except (KeyError, ValueError, IndexError):
-                    # Keep raw if key missing or malformed (e.g. static value "10")
                     formatted_val = raw_val
 
                 kwargs[param] = formatted_val
@@ -283,7 +438,7 @@ def run_loop_generic(
     console.print("\n[bold green]Loop Complete[/bold green]")
 
 
-# INTERACTIVE SHELL
+# --- INTERACTIVE SHELL ---
 
 @app.command("interactive")
 def interactive_shell():
