@@ -199,7 +199,6 @@ def define_experiment(name: str):
     save_experiment(name, steps)
     console.print(f"[bold green]Saved '{name}' with {len(steps)} steps.[/bold green]")
 
-
 @app.command("run-loop")
 def run_loop_generic(
     name: str,
@@ -241,16 +240,24 @@ def run_loop_generic(
                 console.print(f"[red]Unknown action: {action_name}[/red]")
                 continue
 
+            # Inspect parameters dynamically
+            if hasattr(action_def, "params"):
+                 param_names = action_def.params
+            else:
+                 # It is a raw function
+                 sig = inspect.signature(action_def)
+                 param_names = [p for p in sig.parameters if p != "context"]
+
             # Prepare Arguments (Substitute variables)
             kwargs = {}
-            for param in action_def.params:
+            for param in param_names:
                 raw_val = str(step_config.get(param, ""))
-                # Try to format "{field}" -> "0.5"
+
+                # Format "{field}" -> "0.5" using the context
                 try:
                     formatted_val = raw_val.format(**context)
-                except KeyError:
-                    formatted_val = raw_val # Keep raw if key missing or malformed
-                except ValueError:
+                except (KeyError, ValueError, IndexError):
+                    # Keep raw if key missing or malformed (e.g. static value "10")
                     formatted_val = raw_val
 
                 kwargs[param] = formatted_val
@@ -260,11 +267,18 @@ def run_loop_generic(
 
             # RUN IT
             try:
-                success = action_def.func(**kwargs)
+                # Call the function directly (action_def IS the function)
+                if hasattr(action_def, "func"):
+                    success = action_def.func(**kwargs)
+                else:
+                    success = action_def(**kwargs)
+
                 if not success:
                     console.print(f"[red]Step {i+1} ({action_name}) Failed![/red]")
             except Exception as e:
                 console.print(f"[red]Error in step {i+1}: {e}[/red]")
+                import traceback
+                traceback.print_exc()
 
     console.print("\n[bold green]Loop Complete[/bold green]")
 
