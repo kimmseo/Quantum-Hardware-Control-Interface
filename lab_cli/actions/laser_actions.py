@@ -1,4 +1,4 @@
-# Last updated 14 Jan 2026
+# Last updated 19 Jan 2026
 import os
 import time
 import pandas as pd
@@ -41,14 +41,16 @@ def _internal_set_power(dlc, power_mw: float):
         # Method 1: Power Stabilization (Preferred for constant output)
         if hasattr(dlc.laser1, 'power_stabilization'):
             # Auto-enable stabilization before setting the value
-            dlc.laser1.power_stabilization.enabled.set(True)
-            dlc.laser1.power_stabilization.setpoint.set(float(power_mw))
+            # Using direct assignment
+            dlc.laser1.power_stabilization.enabled = True
+            dlc.laser1.power_stabilization.setpoint = float(power_mw)
             console.print("[green]Power Stabilization Enabled & Set.[/green]")
             return True
 
         # Method 2: Direct CTL Power (Fallback)
         elif hasattr(dlc.laser1, 'ctl') and hasattr(dlc.laser1.ctl, 'power'):
-            dlc.laser1.ctl.power.set(float(power_mw))
+            # Using direct assignment
+            dlc.laser1.ctl.power = float(power_mw)
             return True
 
         else:
@@ -78,7 +80,8 @@ def action_enable_stabilization(state: int):
                 return False
 
             enable_bool = (int(state) == 1)
-            dlc.laser1.power_stabilization.enabled.set(enable_bool)
+            # Using direct assignment
+            dlc.laser1.power_stabilization.enabled = enable_bool
 
             status_str = "ENABLED" if enable_bool else "DISABLED"
             console.print(f"[green]Power Stabilization {status_str} \
@@ -139,29 +142,33 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
 
             # Setup Sweep Parameters
             console.print(f"Sweeping {start_nm}-{end_nm} nm @ {speed} nm/s...")
-            dlc.laser1.wide_scan.scan_begin.set(float(start_nm))
-            dlc.laser1.wide_scan.scan_end.set(float(end_nm))
-            dlc.laser1.wide_scan.speed.set(float(speed))
+
+            # Set parameters for sweep
+            dlc.laser1.wide_scan.scan_begin = float(start_nm)
+            dlc.laser1.wide_scan.scan_end = float(end_nm)
+            dlc.laser1.wide_scan.speed = float(speed)
 
             # Setup Recorder
             scan_range = abs(float(end_nm) - float(start_nm))
             duration = scan_range / float(speed)
 
-            # Explicitly set rate to 100 Hz
-            dlc.laser1.recorder.sampling_rate.set(100.0)
+            try:
+                dlc.laser1.recorder.sampling_rate = 100.0
+            except (AttributeError, ValueError):
+                console.print("[yellow]Warning: Could not set sampling_rate (using default).[/yellow]")
 
             # Add small buffer to recording time
-            dlc.laser1.recorder.recording_time.set(duration + 1.0)
+            dlc.laser1.recorder.recording_time = duration + 1.0
 
-            # Start Sweep
+            # Start Sweep (Method call remains valid)
             dlc.laser1.wide_scan.start()
 
             # Monitor State: 0 = Idle/Off, 1 = Moving/Scanning
-            while dlc.laser1.wide_scan.state.get() != 0:
+            while dlc.laser1.wide_scan.state != 0:
                 time.sleep(0.5)
 
             # Fetch Data
-            total_samples = dlc.laser1.recorder.data.recorded_sample_count.get()
+            total_samples = dlc.laser1.recorder.data.recorded_sample_count
             console.print(f"Acquiring {total_samples} samples...")
 
             x_data = []
@@ -201,4 +208,7 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
 
     except Exception as e:
         console.print(f"[red]Sweep Failed: {e}[/red]")
+        # Optional: Print traceback for easier debugging
+        import traceback
+        traceback.print_exc()
         return False
