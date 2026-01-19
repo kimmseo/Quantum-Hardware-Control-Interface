@@ -156,7 +156,7 @@ def action_set_power(power: float):
 def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
                  context: dict = None):
     """
-    Performs a wide scan sweep and saves data.
+    Performs a wide scan sweep with safety timeouts and status logging.
     """
     ip, _ = _get_dlc_connection()
     if not ip: return False
@@ -173,39 +173,80 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
 
     try:
         with DLCpro(NetworkConnection(ip)) as dlc:
-            # Set Power
+            # 1. Set Power
             _internal_set_power(dlc, power)
 
             console.print(f"Sweeping {start_nm}-{end_nm} nm @ {speed} nm/s...")
 
-            # Use _force_set for WideScan parameters
-            # Uses _scan_begin.set() or similar internally
+            # 2. Setup Sweep Parameters (Using _force_set)
             if not _force_set(dlc.laser1.wide_scan, 'scan_begin', float(start_nm)):
                 return False
             _force_set(dlc.laser1.wide_scan, 'scan_end', float(end_nm))
             _force_set(dlc.laser1.wide_scan, 'speed', float(speed))
 
-            # Setup Recorder
+            # 3. Setup Recorder
             scan_range = abs(float(end_nm) - float(start_nm))
             duration = scan_range / float(speed)
 
-            # Use _force_set for sampling_rate (found _sampling_rate in debug)
+            # Add safety buffer (minimum 10s or 20% extra)
+            timeout_buffer = max(10.0, duration * 0.2)
+            max_wait_time = duration + timeout_buffer
+
             _force_set(dlc.laser1.recorder, 'sampling_rate', 100.0)
+            _force_set(dlc.laser1.recorder, 'recording_time', duration + 2.0)
 
-            # Add buffer to recording time
-            _force_set(dlc.laser1.recorder, 'recording_time', duration + 1.0)
-
-            # Start Sweep
+            # 4. Start Sweep
             dlc.laser1.wide_scan.start()
 
-            # Monitor State: 0 = Idle/Off, 1 = Moving/Scanning
-            # We use direct access for reading (getting is usually fine)
-            while dlc.laser1.wide_scan.state != 0:
+            # 5. Monitor State with Timeout
+            start_time = time.time()
+            console.print(f"[cyan]Waiting for sweep (Max wait: {max_wait_time:.1f}s)...[/cyan]")
+
+            last_state = -99
+
+            while True:
+                # Check for Timeout
+                elapsed = time.time() - start_time
+                if elapsed > max_wait_time:
+                    console.print(f"\n[bold red]TIMEOUT: Sweep took longer than {max_wait_time:.1f}s.[/bold red]")
+                    try:
+                        dlc.laser1.wide_scan.stop() # Attempt to force stop
+                    except:
+                        pass
+                    break
+
+                # Read State
+                try:
+                    # Depending on SDK, this might need .get() or just direct access.
+                    # We try direct access first (standard for properties)
+                    current_state = dlc.laser1.wide_scan.state
+                except Exception:
+                    # Fallback if direct access fails
+                    try:
+                        current_state = dlc.laser1.wide_scan.state.get()
+                    except:
+                        current_state = -1
+
+                # Check for Completion (State 0 = Idle)
+                if current_state == 0:
+                    console.print("\n[green]Sweep Complete (State 0).[/green]")
+                    break
+
+                # Log state changes
+                if current_state != last_state:
+                    console.print(f"Laser State: {current_state} (Scanning...)")
+                    last_state = current_state
+
                 time.sleep(0.5)
 
-            # Fetch Data
-            # recorded_sample_count is likely a read-only property, which is fine for reading
-            total_samples = dlc.laser1.recorder.data.recorded_sample_count
+            # 6. Fetch Data
+            # recorded_sample_count is read-only, direct access usually works
+            try:
+                total_samples = dlc.laser1.recorder.data.recorded_sample_count
+            except TypeError:
+                # Fallback if it requires .get()
+                total_samples = dlc.laser1.recorder.data.recorded_sample_count.get()
+
             console.print(f"Acquiring {total_samples} samples...")
 
             x_data = []
@@ -217,14 +258,13 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
                     chunk = min(1024, total_samples - index)
                     raw = dlc.laser1.recorder.data.get_data(index, chunk)
 
-                    # Parse binary data
                     xy = extract_float_arrays('xy', raw)
                     if 'x' in xy: x_data.extend(xy['x'])
                     if 'y' in xy: y_data.extend(xy['y'])
 
                     index += chunk
 
-            # Save Data
+            # 7. Save Data
             if x_data and y_data:
                 df = pd.DataFrame({"Wavelength": x_data, "Intensity": y_data})
                 df.to_excel(f"{filename_base}.xlsx", index=False)
@@ -245,6 +285,6 @@ def action_sweep(start_nm: float, end_nm: float, speed: float, power: float,
 
     except Exception as e:
         console.print(f"[red]Sweep Failed: {e}[/red]")
-        # import traceback
-        # traceback.print_exc()
+        import traceback
+        traceback.print_exc()
         return False
