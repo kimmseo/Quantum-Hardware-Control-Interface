@@ -1,4 +1,4 @@
-# Lab-Device-Controller CLI
+# Quantum Hardware Control Interface
 
 A versatile, future-proof command-line interface (CLI) for automating laboratory equipment, running complex experiments, and monitoring hardware status.
 
