@@ -11,6 +11,7 @@ import inspect
 import os
 import json
 import numpy as np # Ensure numpy is imported for run-loop
+from typing import List
 
 from . import actions
 # Force load the plugins
@@ -436,6 +437,155 @@ def run_loop_generic(
                 traceback.print_exc()
 
     console.print("\n[bold green]Loop Complete[/bold green]")
+
+"""
+Define your experiments with placeholders as usual (e.g., {field}, {power}). Then, just type:
+
+lab-cli > run-multi set_magnet measure_spectrum
+
+The program will then guide you:
+
+    Enter Variable Name: field
+
+    Values: 0:0.5:0.1 (This generates 0, 0.1, 0.2, 0.3, 0.4, 0.5)
+
+    Enter Variable Name: power
+
+    Values: 50,55,60,65,70,75 (Manual list)
+
+    Enter Variable Name: done
+
+It will check that you have 6 steps for both, and then execute the loop, changing both variables simultaneously for every step.
+"""
+
+@app.command("run-multi")
+def run_multi(
+    experiments: List[str] = typer.Argument(..., help="List of experiment names to run"),
+    delay: float = typer.Option(2.0, help="Delay (s) between experiments")
+):
+    """
+    Interactively defines multiple variables to loop over simultaneously.
+    No external files required. Enter 'done' when finished adding variables.
+    """
+    import numpy as np
+
+    # 1. Interactive Variable Setup
+    variables = {} # Stores lists of values: {'field': [0, 0.1], 'power': [50, 60]}
+
+    console.print("[bold green]Define your Loop Variables:[/bold green]")
+    console.print("Formats accepted:\n - Range:  start:end:step (e.g. 0:1:0.1)\n - Manual: val1,val2,val3 (e.g. 50,60,70)")
+
+    while True:
+        var_name = Prompt.ask("\n[bold cyan]Enter Variable Name[/bold cyan] (or 'done' to finish)")
+        if var_name.lower() == 'done':
+            if not variables:
+                console.print("[red]No variables defined![/red]")
+                return
+            break
+
+        val_str = Prompt.ask(f"Values for '{var_name}'")
+
+        try:
+            # Parse "start:end:step" -> Numpy Array
+            if ":" in val_str:
+                parts = [float(x) for x in val_str.split(":")]
+                if len(parts) == 3:
+                    start, end, step = parts
+                    # Handle negative steps
+                    if start > end and step > 0: step = -step
+                    # Create array with small buffer to include end value
+                    vals = np.arange(start, end + step/10000.0, step)
+                    vals = [round(x, 5) for x in vals.tolist()]
+                else:
+                    console.print("[red]Range format must be start:end:step[/red]")
+                    continue
+
+            # Parse "v1,v2,v3" -> List
+            else:
+                vals = [x.strip() for x in val_str.split(",")]
+
+            variables[var_name] = vals
+            console.print(f"[green]Added '{var_name}' with {len(vals)} steps: {vals}[/green]")
+
+        except Exception as e:
+            console.print(f"[red]Error parsing values: {e}[/red]")
+
+    # 2. Validation (Ensure all lists are same length)
+    lengths = {k: len(v) for k, v in variables.items()}
+    max_len = max(lengths.values())
+
+    # Check for mismatches
+    if len(set(lengths.values())) > 1:
+        console.print(f"\n[bold red]Warning: Variable lengths do not match! {lengths}[/bold red]")
+        console.print(f"The loop will run for {max_len} iterations.")
+        console.print("Variables with fewer steps will repeat their last value.")
+        if not typer.confirm("Continue?"): return
+
+    # 3. Execution Loop
+    console.print(f"\n[bold]Starting Multi-Variable Loop ({max_len} iterations)...[/bold]")
+
+    for i in range(max_len):
+        # Build Context for this iteration
+        context = {}
+        for var, val_list in variables.items():
+            # Get value safely (repeat last if index out of bounds)
+            idx = min(i, len(val_list) - 1)
+            context[var] = val_list[idx]
+
+        loop_info = ", ".join([f"{k}={v}" for k, v in context.items()])
+        console.print(f"\n[bold yellow]=== Iteration {i+1}/{max_len}: {loop_info} ===[/bold yellow]")
+
+        # Run Sequence
+        for exp_idx, exp_name in enumerate(experiments):
+            steps = get_experiment(exp_name)
+            if not steps:
+                console.print(f"[red]Skipping unknown experiment: {exp_name}[/red]")
+                continue
+
+            console.print(f"[bold cyan]  Running: {exp_name}[/bold cyan]")
+
+            # Execute Steps
+            for step_idx, step_config in enumerate(steps):
+                action_name = step_config["type"]
+                action_def = get_action(action_name)
+
+                if not action_def:
+                    continue
+
+                # Inspect Params
+                if hasattr(action_def, "params"):
+                    param_names = action_def.params
+                else:
+                    sig = inspect.signature(action_def)
+                    param_names = [p for p in sig.parameters if p != "context"]
+
+                # Substitute Variables
+                kwargs = {}
+                for param in param_names:
+                    raw_val = str(step_config.get(param, ""))
+                    try:
+                        formatted_val = raw_val.format(**context)
+                    except (KeyError, ValueError, IndexError):
+                        formatted_val = raw_val
+                    kwargs[param] = formatted_val
+
+                kwargs["context"] = context
+
+                # Execute
+                try:
+                    if hasattr(action_def, "func"):
+                        action_def.func(**kwargs)
+                    else:
+                        action_def(**kwargs)
+                except Exception as e:
+                    console.print(f"[red]    Error in {exp_name} step {step_idx+1}: {e}[/red]")
+
+            # Delay between experiments
+            if exp_idx < len(experiments) - 1:
+                console.print(f"    [dim]Waiting {delay}s...[/dim]")
+                time.sleep(delay)
+
+    console.print("\n[bold green]Multi-Run Complete[/bold green]")
 
 
 # --- INTERACTIVE SHELL ---
