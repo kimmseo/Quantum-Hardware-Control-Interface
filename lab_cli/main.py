@@ -455,7 +455,8 @@ The program will then guide you:
 
     Enter Variable Name: done
 
-It will check that you have 6 steps for both, and then execute the loop, changing both variables simultaneously for every step.
+It will check that you have 6 steps for both, and then execute the loop,
+changing both variables simultaneously for every step.
 """
 
 @app.command("run-multi")
@@ -469,14 +470,17 @@ def run_multi(
     """
     import numpy as np
 
-    # 1. Interactive Variable Setup
-    variables = {} # Stores lists of values: {'field': [0, 0.1], 'power': [50, 60]}
+    # Interactive Variable Setup
+    # Stores lists of values: {'field': [0, 0.1], 'power': [50, 60]}
+    variables = {}
 
     console.print("[bold green]Define your Loop Variables:[/bold green]")
-    console.print("Formats accepted:\n - Range:  start:end:step (e.g. 0:1:0.1)\n - Manual: val1,val2,val3 (e.g. 50,60,70)")
+    console.print("Formats accepted:\n - Range:  start:end:step (e.g. 0:1:0.1)\n \
+                  - Manual: val1,val2,val3 (e.g. 50,60,70)")
 
     while True:
-        var_name = Prompt.ask("\n[bold cyan]Enter Variable Name[/bold cyan] (or 'done' to finish)")
+        var_name = Prompt.ask("\n[bold cyan]Enter Variable Name[/bold cyan] \
+                              (or 'done' to finish)")
         if var_name.lower() == 'done':
             if not variables:
                 console.print("[red]No variables defined![/red]")
@@ -510,7 +514,7 @@ def run_multi(
         except Exception as e:
             console.print(f"[red]Error parsing values: {e}[/red]")
 
-    # 2. Validation (Ensure all lists are same length)
+    # Validation (Ensure all lists are same length)
     lengths = {k: len(v) for k, v in variables.items()}
     max_len = max(lengths.values())
 
@@ -521,7 +525,7 @@ def run_multi(
         console.print("Variables with fewer steps will repeat their last value.")
         if not typer.confirm("Continue?"): return
 
-    # 3. Execution Loop
+    # Execution Loop
     console.print(f"\n[bold]Starting Multi-Variable Loop ({max_len} iterations)...[/bold]")
 
     for i in range(max_len):
@@ -578,7 +582,8 @@ def run_multi(
                     else:
                         action_def(**kwargs)
                 except Exception as e:
-                    console.print(f"[red]    Error in {exp_name} step {step_idx+1}: {e}[/red]")
+                    console.print(f"[red]    Error in {exp_name} step \
+                                  {step_idx+1}: {e}[/red]")
 
             # Delay between experiments
             if exp_idx < len(experiments) - 1:
