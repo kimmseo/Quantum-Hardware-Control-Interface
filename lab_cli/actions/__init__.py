@@ -1,15 +1,14 @@
-# 1. Define the Registry
-# (Renamed to match standard conventions, but simple 'registry' is fine too)
+# Define the Registry
 registry = {}
 
-# 2. Define the Decorator
+# Define the Decorator
 def register_action(name):
     def decorator(func):
         registry[name] = func
         return func
     return decorator
 
-# 3. Define Helper Functions
+# Define Helper Functions
 def get_all_actions():
     """
     Returns the FULL registry dictionary.
@@ -55,7 +54,7 @@ def handle_command(raw_input):
         print(f"[Error] Unknown command: '{cmd_name}'")
         return False
 
-# 4. Import Plugins Last (Required to fill the registry)
+# Import Plugins Last (Required to fill the registry)
 # This executes the decorator @register_action in those files
 try:
     from . import laser_actions
