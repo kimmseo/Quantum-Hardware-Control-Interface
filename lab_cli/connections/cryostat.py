@@ -202,3 +202,22 @@ def set_vacuum_pump(ip: str, enable: bool) -> str:
 
     response = _send_cryo_command(ip, command)
     return response
+
+# For getting magnet temp 3
+def get_channel_temperature(ip: str, channel_id: int) -> float:
+    """
+    Fetches temperature (K) from a specific channel via REST API.
+    Useful for monitoring 'Temp 3' (Magnet) specifically.
+    """
+    # REST Endpoint for Montana Cryostation channel temperature
+    endpoint = f"http://{ip}:47101/v1/controller/temperatureChannels/{channel_id}/temperature"
+
+    try:
+        response = requests.get(endpoint, timeout=2)
+        if response.status_code == 200:
+            # The API returns the float value directly as text
+            return float(response.text)
+        else:
+            return 0.0
+    except Exception:
+        return 0.0

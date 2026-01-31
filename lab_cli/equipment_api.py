@@ -4,7 +4,7 @@ from datetime import datetime
 
 # Import connection handlers
 from .connections.laser import get_laser_details
-from .connections.cryostat import get_cryostat_details
+from .connections.cryostat import get_cryostat_details, get_channel_temperature
 # from .connections.oscilloscope import get_scope_details
 
 # Config
@@ -82,3 +82,12 @@ def get_equipment_by_id(equipment_id: str) -> Optional[Dict[str, Any]]:
         device_data["status"] = "Idle (Mock)"
 
     return device_data
+
+# Temp 3, Magnet cryostat
+def get_magnet_temp_reading(channel_id: int = 3) -> float:
+    """Helper to get the magnet temperature (defaults to Channel 3)."""
+    config = EQUIPMENT_CONFIG.get("cryo-01")
+    if not config or config.get("driver") != "montana":
+        return 0.0
+
+    return get_channel_temperature(config["ip"], channel_id)

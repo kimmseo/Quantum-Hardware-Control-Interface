@@ -22,7 +22,38 @@ from .actions import general_actions
 # Application Modules
 from .experiment_registry import save_experiment, get_experiment
 from .actions import get_all_actions, get_action
-from .equipment_api import get_all_equipment, get_equipment_by_id
+from .equipment_api import get_all_equipment, get_equipment_by_id, \
+get_magnet_temp_reading
+
+
+# Check Temp 3 (Magnet cryostat for overheating)
+def _check_magnet_safety(limit_max: float, limit_min: float):
+    """
+    Checks if Magnet Temp (Ch3) exceeds limit_max.
+    If so, pauses execution until it drops below limit_min.
+    """
+    if limit_max is None:
+        return
+
+    # Read Temp 3
+    current_temp = get_magnet_temp_reading(channel_id=3)
+
+    # Check for Overheating
+    if current_temp > limit_max:
+        console.print(f"\n[bold white on red]CRITICAL: Magnet Overheating (T={current_temp:.2f}K > {limit_max}K)[/]")
+        console.print(f"[yellow]Pausing experiment. Cooling down to {limit_min}K...[/yellow]")
+
+        start_pause = time.time()
+
+        # Blocking Loop until cool
+        while current_temp > limit_min:
+            time.sleep(5) # Check every 5 seconds
+            current_temp = get_magnet_temp_reading(channel_id=3)
+
+            elapsed = int(time.time() - start_pause)
+            console.print(f"  Cooling... T={current_temp:.2f}K (Elapsed: {elapsed}s)", end="\r")
+
+        console.print(f"\n[bold green]Temperature Normal (T={current_temp:.2f}K). Resuming Experiment.[/bold green]\n")
 
 app = typer.Typer(
     help="CLI to monitor and control lab equipment.",
@@ -364,32 +395,48 @@ def run_loop_generic(
     start: float = typer.Option(..., help="Start value"),
     end: float = typer.Option(..., help="End value"),
     step: float = typer.Option(..., help="Step size"),
+    safe_max: float = typer.Option(None, help="Pause if Magnet Temp (Ch3) > this value"),
+    safe_min: float = typer.Option(None, help="Resume when Magnet Temp (Ch3) < this value"),
 ):
     """
     Loops ANY defined experiment over a specific variable.
+    Includes optional safety monitoring for magnet temperature (Temp 3).
     """
     steps = get_experiment(name)
     if not steps:
         console.print(f"[red]Experiment '{name}' not found.[/red]")
         return
 
+    # Auto-set safe_min if not provided (default to 2K hysteresis)
+    if safe_max is not None and safe_min is None:
+        safe_min = safe_max - 2.0
+
     # Handle range direction
     if start > end and step > 0: step = -step
-    # Add tiny buffer to include the end value
     values = np.arange(start, end + step/10000.0, step)
 
     console.print(f"[bold]Looping '{name}' over {variable} ({start} -> {end})[/bold]")
+    if safe_max:
+        console.print(f"[yellow]Safety Monitor Active: Pause > {safe_max}K, Resume < {safe_min}K[/yellow]")
+
     if not typer.confirm("Start?"): return
 
     for val in values:
+        # --- SAFETY CHECK BEFORE ITERATION ---
+        _check_magnet_safety(safe_max, safe_min)
+        # -------------------------------------
+
         val = round(float(val), 5)
         console.print(f"\n[bold yellow]--- {variable} = {val} ---[/bold yellow]")
 
-        # Context holds the current loop variable
         context = {variable: val}
 
         # Execute Steps
         for i, step_config in enumerate(steps):
+
+            # Optional: Check safety between steps too if the experiment is slow
+            # _check_magnet_safety(safe_max, safe_min)
+
             action_name = step_config["type"]
             action_def = get_action(action_name)
 
@@ -401,29 +448,22 @@ def run_loop_generic(
             if hasattr(action_def, "params"):
                  param_names = action_def.params
             else:
-                 # It is a raw function
                  sig = inspect.signature(action_def)
                  param_names = [p for p in sig.parameters if p != "context"]
 
-            # Prepare Arguments (Substitute variables)
             kwargs = {}
             for param in param_names:
                 raw_val = str(step_config.get(param, ""))
-
-                # Format "{field}" -> "0.5" using the context
                 try:
                     formatted_val = raw_val.format(**context)
                 except (KeyError, ValueError, IndexError):
                     formatted_val = raw_val
-
                 kwargs[param] = formatted_val
 
-            # Pass context for logging/filenames/logic
             kwargs["context"] = context
 
-            # RUN IT
             try:
-                # Call the function directly (action_def IS the function)
+                # Call function
                 if hasattr(action_def, "func"):
                     success = action_def.func(**kwargs)
                 else:
